@@ -1158,7 +1158,7 @@ impl App {
     }
 
     pub fn select_column_right(&mut self) {
-        if self.select_column < 13 {
+        if self.select_column < 22 {
             self.select_column += 1;
         }
     }
@@ -1176,19 +1176,26 @@ impl App {
             4 => {
                 self.input_mode = InputMode::ParamsBucketPopup;
             } // Params
-            5 => self.set_or_toggle_sort(SortColumn::Score), // Score
-            6 => self.set_or_toggle_sort(SortColumn::Tps), // tok/s
-            7 => {
+            5 | 6 => {}                           // Arch / Act.P — no filter yet
+            7 => self.set_or_toggle_sort(SortColumn::Score), // Score
+            8 | 9 => self.set_or_toggle_sort(SortColumn::Score), // Qual/Spd → sort by score
+            10 => self.set_or_toggle_sort(SortColumn::Tps), // tok/s
+            11 => {
                 self.input_mode = InputMode::QuantPopup;
             } // Quant
-            8 => {
+            12 | 13 => {}                          // Fmt / Runtime — no filter yet
+            14 => {
                 self.input_mode = InputMode::RunModePopup;
             } // Mode
-            9 => self.set_or_toggle_sort(SortColumn::MemPct), // Mem%
-            10 => self.set_or_toggle_sort(SortColumn::Ctx), // Ctx
-            11 => self.set_or_toggle_sort(SortColumn::ReleaseDate), // Date
-            12 => self.cycle_fit_filter(),         // Fit
-            13 => {
+            15 | 16 => self.set_or_toggle_sort(SortColumn::MemPct), // Mem% / MemGB
+            17 => self.set_or_toggle_sort(SortColumn::Ctx), // Ctx
+            18 => self.set_or_toggle_sort(SortColumn::ReleaseDate), // Date
+            19 => self.cycle_fit_filter(),         // Fit
+            20 => {
+                self.input_mode = InputMode::CapabilityPopup;
+            } // Caps
+            21 => {}                               // GGUF — no filter yet
+            22 => {
                 self.input_mode = InputMode::UseCasePopup;
             } // Use Case
             _ => {}

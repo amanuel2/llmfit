@@ -477,17 +477,18 @@ fn pull_indicator(percent: Option<f64>, tick: u64) -> String {
 fn draw_table(frame: &mut Frame, app: &mut App, area: Rect, tc: &ThemeColors) {
     let sort_col = app.sort_column;
     let header_names = [
-        "", "Inst", "Model", "Provider", "Params", "Score", "tok/s*", "Quant", "Mode", "Mem %",
-        "Ctx", "Date", "Fit", "Use Case",
+        "", "Inst", "Model", "Provider", "Params", "Arch", "Act.P",
+        "Score", "Qual", "Spd", "tok/s*", "Quant", "Fmt", "Runtime", "Mode",
+        "Mem %", "MemGB", "Ctx", "Date", "Fit", "Caps", "GGUF", "Use Case",
     ];
     let sort_col_idx: Option<usize> = match sort_col {
-        SortColumn::Score => Some(5),
-        SortColumn::Tps => Some(6),
+        SortColumn::Score => Some(7),
+        SortColumn::Tps => Some(10),
         SortColumn::Params => Some(4),
-        SortColumn::MemPct => Some(9),
-        SortColumn::Ctx => Some(10),
-        SortColumn::ReleaseDate => Some(11),
-        SortColumn::UseCase => Some(13),
+        SortColumn::MemPct => Some(15),
+        SortColumn::Ctx => Some(17),
+        SortColumn::ReleaseDate => Some(18),
+        SortColumn::UseCase => Some(22),
     };
     let in_select_mode = app.input_mode == InputMode::Select;
     let header_cells = header_names.iter().enumerate().map(|(i, h)| {
@@ -621,11 +622,63 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect, tc: &ThemeColors) {
                 Cell::from(fit.model.name.clone()).style(Style::default().fg(tc.fg)),
                 Cell::from(fit.model.provider.clone()).style(Style::default().fg(tc.muted)),
                 Cell::from(fit.model.parameter_count.clone()).style(Style::default().fg(tc.fg)),
+                // Arch: Dense vs MoE with expert topology
+                Cell::from(if fit.model.is_moe {
+                    format!("MoE {}×{}",
+                        fit.model.num_experts.unwrap_or(0),
+                        fit.model.active_experts.unwrap_or(0))
+                } else {
+                    "Dense".to_string()
+                }).style(Style::default().fg(if fit.model.is_moe { tc.accent_secondary } else { tc.muted })),
+                // Active params (MoE only)
+                Cell::from(if fit.model.is_moe {
+                    if let Some(ap) = fit.model.active_parameters {
+                        let b = ap as f64 / 1_000_000_000.0;
+                        if b >= 1.0 { format!("{:.1}B", b) } else { format!("{:.0}M", b * 1000.0) }
+                    } else {
+                        "\u{2014}".to_string()
+                    }
+                } else {
+                    "\u{2014}".to_string()
+                }).style(Style::default().fg(if fit.model.is_moe { tc.fg } else { tc.muted })),
                 Cell::from(format!("{:.0}", fit.score)).style(Style::default().fg(score_color)),
+                // Quality sub-score
+                Cell::from(format!("{:.0}", fit.score_components.quality)).style(Style::default().fg(
+                    if fit.score_components.quality >= 70.0 { tc.score_high }
+                    else if fit.score_components.quality >= 50.0 { tc.score_mid }
+                    else { tc.score_low }
+                )),
+                // Speed sub-score
+                Cell::from(format!("{:.0}", fit.score_components.speed)).style(Style::default().fg(
+                    if fit.score_components.speed >= 70.0 { tc.score_high }
+                    else if fit.score_components.speed >= 50.0 { tc.score_mid }
+                    else { tc.score_low }
+                )),
                 Cell::from(tps_text).style(Style::default().fg(tc.fg)),
                 Cell::from(fit.best_quant.clone()).style(Style::default().fg(tc.muted)),
+                // Format
+                Cell::from(match fit.model.format {
+                    llmfit_core::models::ModelFormat::Gguf => "GGUF",
+                    llmfit_core::models::ModelFormat::Awq => "AWQ",
+                    llmfit_core::models::ModelFormat::Gptq => "GPTQ",
+                    llmfit_core::models::ModelFormat::Mlx => "MLX",
+                    llmfit_core::models::ModelFormat::Safetensors => "ST",
+                }).style(Style::default().fg(tc.muted)),
+                // Runtime
+                Cell::from(match fit.runtime {
+                    llmfit_core::fit::InferenceRuntime::LlamaCpp => "lcp",
+                    llmfit_core::fit::InferenceRuntime::Mlx => "MLX",
+                    llmfit_core::fit::InferenceRuntime::Vllm => "vLLM",
+                }).style(Style::default().fg(match fit.runtime {
+                    llmfit_core::fit::InferenceRuntime::Mlx => tc.accent_secondary,
+                    llmfit_core::fit::InferenceRuntime::Vllm => tc.accent,
+                    _ => tc.fg,
+                })),
                 Cell::from(fit.run_mode_text().to_string()).style(Style::default().fg(mode_color)),
                 Cell::from(format!("{:.0}%", fit.utilization_pct))
+                    .style(Style::default().fg(color)),
+                // Mem GB (actual required)
+                Cell::from(format!("{:.1}", fit.memory_required_gb))
                     .style(Style::default().fg(color)),
                 Cell::from(format!("{}k", fit.model.context_length / 1000))
                     .style(Style::default().fg(tc.muted)),
@@ -639,6 +692,24 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect, tc: &ThemeColors) {
                 )
                 .style(Style::default().fg(tc.muted)),
                 Cell::from(fit.fit_text().to_string()).style(Style::default().fg(color)),
+                // Capabilities
+                Cell::from({
+                    let caps: Vec<&str> = fit.model.capabilities.iter().map(|c| match c {
+                        llmfit_core::models::Capability::Vision => "V",
+                        llmfit_core::models::Capability::ToolUse => "T",
+                    }).collect();
+                    if caps.is_empty() { "\u{2014}".to_string() } else { caps.join(" ") }
+                }).style(Style::default().fg(
+                    if fit.model.capabilities.is_empty() { tc.muted } else { tc.accent }
+                )),
+                // GGUF sources count
+                Cell::from(if fit.model.gguf_sources.is_empty() {
+                    "\u{2014}".to_string()
+                } else {
+                    format!("{}", fit.model.gguf_sources.len())
+                }).style(Style::default().fg(
+                    if fit.model.gguf_sources.is_empty() { tc.muted } else { tc.info }
+                )),
                 Cell::from(fit.use_case.label().to_string()).style(Style::default().fg(tc.muted)),
             ])
             .style(row_style)
@@ -648,18 +719,27 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect, tc: &ThemeColors) {
     let widths = [
         Constraint::Length(2),  // indicator
         Constraint::Length(5),  // installed / pull %
-        Constraint::Min(20),    // model name
+        Constraint::Min(16),    // model name
         Constraint::Length(12), // provider
-        Constraint::Length(8),  // params
-        Constraint::Length(6),  // score
+        Constraint::Length(7),  // params
+        Constraint::Length(9),  // arch (MoE 128×8)
+        Constraint::Length(6),  // active params
+        Constraint::Length(5),  // score
+        Constraint::Length(4),  // qual sub-score
+        Constraint::Length(4),  // spd sub-score
         Constraint::Length(6),  // tok/s
         Constraint::Length(10), // quant (AWQ-4bit, GPTQ-Int4, GPTQ-Int8)
-        Constraint::Length(7),  // mode
-        Constraint::Length(6),  // mem %
+        Constraint::Length(4),  // format
+        Constraint::Length(4),  // runtime
+        Constraint::Length(6),  // mode
+        Constraint::Length(5),  // mem %
+        Constraint::Length(5),  // mem GB
         Constraint::Length(5),  // ctx
-        Constraint::Length(8),  // date (YYYY-MM)
-        Constraint::Length(10), // fit
-        Constraint::Min(10),    // use case
+        Constraint::Length(7),  // date (YYYY-MM)
+        Constraint::Length(9),  // fit
+        Constraint::Length(4),  // caps
+        Constraint::Length(4),  // gguf sources
+        Constraint::Min(8),     // use case
     ];
 
     let count_text = format!(
